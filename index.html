@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101827">
+<title>QuickSync — Private file transfer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#101827;--panel:#192538;--muted:#9fb0c5;--accent:#63d5c3;--line:#304158}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#101827,#152b3b);font:16px system-ui;color:#f4f7fb;min-height:100vh}
+main{max-width:760px;margin:auto;padding:28px 16px 60px}.brand{font-size:30px;font-weight:800;letter-spacing:-1px}.brand span{color:var(--accent)}.sub{color:var(--muted);margin:4px 0 22px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;margin:14px 0;box-shadow:0 12px 35px #0003}
+h2{font-size:18px;margin:0 0 12px}.row{display:flex;gap:10px;flex-wrap:wrap}button,.filebtn{border:0;border-radius:12px;padding:12px 16px;background:var(--accent);color:#09201e;font-weight:750;font-size:15px;cursor:pointer}button.secondary{background:#2a3b52;color:#f4f7fb;border:1px solid #40536d}button:disabled{opacity:.45;cursor:not-allowed}
+small,.muted{color:var(--muted)}#qr{background:white;padding:12px;border-radius:12px;display:inline-block;min-height:20px}#reader{width:100%;max-width:420px;overflow:hidden;border-radius:12px}textarea{width:100%;min-height:90px;background:#0d1725;color:#dce8f5;border:1px solid var(--line);border-radius:10px;padding:10px;word-break:break-all}
+input[type=file]{display:none}.status{padding:11px;border-radius:10px;background:#0d1725;color:var(--accent);margin-top:10px;white-space:pre-wrap}
+.progress{height:9px;background:#0d1725;border-radius:20px;overflow:hidden;margin:10px 0}.bar{height:100%;width:0;background:var(--accent);transition:width .15s}
+#received a{display:block;color:var(--accent);padding:7px 0;overflow-wrap:anywhere}.hidden{display:none}.pill{display:inline-block;padding:5px 9px;border-radius:99px;background:#23364a;color:var(--accent);font-size:12px}
+</style></head>
+<body><main>
+<div class="brand">Quick<span>Sync</span></div><div class="sub">Private file transfer • No Gmail • No account</div>
+<div class="card"><span class="pill">Android · iPhone · Windows</span><h2 style="margin-top:12px">Connect two devices</h2>
+<p class="muted">Both devices should open this page. Keep them online during pairing. QR pairing uses a temporary connection; files transfer device-to-device when the connection succeeds.</p>
+<div class="row"><button id="make">Create connection</button><button class="secondary" id="scanOffer">Scan connection QR</button></div>
+<div id="qrArea" class="hidden" style="margin-top:16px"><p id="qrLabel" class="muted">Scan this QR from the other device:</p><div id="qr"></div><p class="muted">If QR scanning is unavailable, copy the code below to the other device.</p><textarea id="codeOut" readonly></textarea><button class="secondary" id="copyCode">Copy code</button></div>
+<div id="scanArea" class="hidden" style="margin-top:16px"><div id="reader"></div><button class="secondary" id="stopScan" style="margin-top:10px">Stop camera</button></div>
+<div id="answerArea" class="hidden" style="margin-top:16px"><h2>Connection reply</h2><div id="answerQr"></div><textarea id="answerOut" readonly></textarea><button class="secondary" id="copyAnswer">Copy reply</button><p class="muted">Scan this reply QR on the device that created the connection.</p></div>
+<div class="card" style="padding:12px;margin-top:14px"><b>Manual code option</b><p class="muted">Paste a code received from the other device.</p><textarea id="codeIn" placeholder="Paste connection or reply code here"></textarea><div class="row" style="margin-top:8px"><button class="secondary" id="applyCode">Use pasted code</button></div></div>
+<div class="status" id="status">Not connected</div></div>
+<div class="card"><h2>Send files</h2><label class="filebtn" for="files">Choose files</label><input id="files" type="file" multiple><p class="muted" id="chosen">No files selected</p><button id="send" disabled>Send selected files</button><div class="progress"><div class="bar" id="bar"></div></div><small id="progressText">0%</small></div>
+<div class="card"><h2>Received files</h2><div id="received" class="muted">No files received yet.</div></div>
+<p class="muted" style="font-size:12px">Privacy: this page does not upload your files to a cloud drive. WebRTC connection setup may use public STUN infrastructure. Keep the QR/code private. For camera scanning, open this page over HTTPS.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);let pc=null,dc=null,scanner=null,role=null,files=[];
+const status=t=>$('status').textContent=t;
+const b64=s=>btoa(unescape(encodeURIComponent(s)));
+const unb64=s=>decodeURIComponent(escape(atob(s)));
+function makePC(){
+ pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+ pc.onconnectionstatechange=()=>{status('Connection: '+pc.connectionState);if(pc.connectionState==='connected')$('send').disabled=false};
+ pc.ondatachannel=e=>setupChannel(e.channel);
+ return pc;
+}
+function setupChannel(ch){dc=ch;dc.binaryType='arraybuffer';let meta=null,chunks=[],got=0;
+ dc.onopen=()=>{status('Connected — ready to transfer');$('send').disabled=false};
+ dc.onmessage=e=>{
+  if(typeof e.data==='string'){let m;try{m=JSON.parse(e.data)}catch{return}
+   if(m.type==='file'){meta=m;chunks=[];got=0;status('Receiving '+m.name)}
+   else if(m.type==='end'&&meta){let blob=new Blob(chunks,{type:meta.mime||'application/octet-stream'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=meta.name;a.textContent=meta.name+' ('+(meta.size/1024/1024).toFixed(2)+' MB) — Download';$('received').appendChild(a);meta=null;status('File received')}
+  }else{chunks.push(e.data);got+=e.data.byteLength;if(meta)status('Receiving '+meta.name+' — '+Math.round(got/meta.size*100)+'%')}
+ };
+}
+async function waitIce(){if(pc.iceGatheringState==='complete')return;await new Promise(resolve=>{let t=setTimeout(resolve,12000);pc.addEventListener('icegatheringstatechange',()=>{if(pc.iceGatheringState==='complete'){clearTimeout(t);resolve()}},{once:false})})}
+function showQR(data,area,qr,label){$(area).classList.remove('hidden');$(qr).innerHTML='';new QRCode($(qr),{text:data,width:240,height:240,correctLevel:QRCode.CorrectLevel.L});if(label)$('qrLabel').textContent=label}
+async function create(){try{role='offer';makePC();setupChannel(pc.createDataChannel('files'));let offer=await pc.createOffer();await pc.setLocalDescription(offer);status('Preparing QR…');await waitIce();let code=b64(JSON.stringify(pc.localDescription));$('codeOut').value=code;showQR(code,'qrArea','qr','Scan this QR from the other device:');status('Offer ready — scan from the second device')}catch(e){status('Could not create connection: '+e.message)}}
+async function apply(code){try{let desc=JSON.parse(unb64(code.trim()));if(!desc.type||!desc.sdp)throw Error('Invalid code');if(desc.type==='offer'){role='answer';makePC();await pc.setRemoteDescription(desc);let ans=await pc.createAnswer();await pc.setLocalDescription(ans);await waitIce();let out=b64(JSON.stringify(pc.localDescription));$('answerOut').value=out;$('answerArea').classList.remove('hidden');$('answerQr').innerHTML='';new QRCode($('answerQr'),{text:out,width:240,height:240});status('Reply ready — scan it on the first device')}else if(desc.type==='answer'&&role==='offer'){await pc.setRemoteDescription(desc);status('Reply accepted — connecting…')}else throw Error('This code is not for the current step')}catch(e){status('Code error: '+e.message)}}
+async function startScan(target){if(!window.Html5Qrcode){status('QR scanner library unavailable. Use manual code paste.');return}$('scanArea').classList.remove('hidden');scanner=new Html5Qrcode('reader');try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:250}},async text=>{await scanner.stop();$('scanArea').classList.add('hidden');if(target==='offer')await apply(text);else await apply(text)})}catch(e){status('Camera unavailable. Allow camera permission or paste code manually. '+e.message)}}
+$('make').onclick=create;$('scanOffer').onclick=()=>startScan('offer');$('stopScan').onclick=async()=>{if(scanner){await scanner.stop();$('scanArea').classList.add('hidden')}};
+$('applyCode').onclick=()=>apply($('codeIn').value);$('copyCode').onclick=()=>navigator.clipboard.writeText($('codeOut').value);$('copyAnswer').onclick=()=>navigator.clipboard.writeText($('answerOut').value);
+$('files').onchange=e=>{files=[...e.target.files];$('chosen').textContent=files.length+' file(s) selected';};
+$('send').onclick=async()=>{if(!dc||dc.readyState!=='open')return status('Not connected');for(const f of files){dc.send(JSON.stringify({type:'file',name:f.name,size:f.size,mime:f.type}));let buf=await f.arrayBuffer(),chunk=16*1024;for(let i=0;i<buf.byteLength;i+=chunk){while(dc.bufferedAmount>1024*1024)await new Promise(r=>setTimeout(r,40));dc.send(buf.slice(i,i+chunk));$('bar').style.width=Math.round(Math.min(i+chunk,buf.byteLength)/buf.byteLength*100)+'%';$('progressText').textContent=Math.round(Math.min(i+chunk,buf.byteLength)/buf.byteLength*100)+'%'}dc.send(JSON.stringify({type:'end'}));}status('All selected files sent');};
+</script></body></html>
